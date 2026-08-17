@@ -1,0 +1,17 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- EDGEHAWK mark: three ascending candlestick bars forming a hawk wing -->
+  <g fill="#00E68C">
+    <!-- bar 1 (short) -->
+    <rect x="8" y="34" width="10" height="18" rx="1"/>
+    <rect x="12" y="29" width="2" height="28"/>
+    <!-- bar 2 (mid) -->
+    <rect x="24" y="24" width="10" height="22" rx="1"/>
+    <rect x="28" y="19" width="2" height="32"/>
+    <!-- bar 3 (tall) — wick extends into wingtip -->
+    <polygon points="39,14 49,14 49,34 39,34"/>
+    <polygon points="42,10 46,10 46,44 42,44"/>
+    <!-- wingtip: sharp extension up-right, doubling as scan-line -->
+    <polygon points="44,10 62,2 47,16"/>
+    <polygon points="47,16 58,10 49,20"/>
+  </g>
+</svg>

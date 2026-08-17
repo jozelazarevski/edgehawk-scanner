@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # Image assets are stored base64-encoded under assets-b64/ (the REST API
+      # only accepts text). Large images are split into .partNN fragments;
+      # reassemble those first, then decode everything into public/.
+      - name: Decode image assets
+        run: |
+          mkdir -p public
+          for base in $(ls assets-b64/*.part* 2>/dev/null | sed 's/\.part[0-9]*$//' | sort -u); do
+            cat "$base".part* > /tmp/full.b64
+            base64 -d /tmp/full.b64 > "public/$(basename "$base" .b64)"
+          done
+          for f in assets-b64/*.b64; do
+            [ -e "$f" ] || continue
+            base64 -d "$f" > "public/$(basename "$f" .b64)"
+          done
+          ls -la public/
+      - run: npm install
+      - run: npm run build:static
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/public
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

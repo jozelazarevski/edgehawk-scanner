@@ -532,8 +532,12 @@ async function fetchYahooQuotes(symbols: string[]): Promise<Map<string, RawQuote
 // scheduled workflow publishes a yfinance snapshot to the `data` branch; the
 // raw CDN is CORS-open. Snapshot = real Yahoo data, delayed (~15 min cadence).
 
-const SNAPSHOT_URL =
-  "https://raw.githubusercontent.com/jozelazarevski/edgehawk-scanner/data/quotes.json";
+// jsDelivr mirrors the data branch quickly (raw.githubusercontent lags/404s
+// on new refs); both are CORS-open. Try in order.
+const SNAPSHOT_URLS = [
+  "https://cdn.jsdelivr.net/gh/jozelazarevski/edgehawk-scanner@data/data/quotes.json",
+  "https://raw.githubusercontent.com/jozelazarevski/edgehawk-scanner/data/quotes.json",
+];
 const SNAPSHOT_MAX_AGE_MS = 72 * 3600 * 1000; // keep Friday close over the weekend
 
 interface SnapshotHistory {
@@ -556,8 +560,16 @@ async function fetchSnapshot(): Promise<Snapshot | null> {
   }
   let data: Snapshot | null = null;
   try {
-    const res = await fetch(SNAPSHOT_URL, { signal: AbortSignal.timeout(9000) });
-    if (res.ok) {
+    let res: Response | null = null;
+    for (const url of SNAPSHOT_URLS) {
+      try {
+        res = await fetch(url, { signal: AbortSignal.timeout(9000) });
+        if (res.ok) break;
+      } catch {
+        // try next mirror
+      }
+    }
+    if (res && res.ok) {
       const parsed = (await res.json()) as Snapshot;
       if (parsed && parsed.ts && Date.now() - parsed.ts * 1000 < SNAPSHOT_MAX_AGE_MS) {
         data = parsed;

@@ -527,6 +527,51 @@ async function fetchYahooQuotes(symbols: string[]): Promise<Map<string, RawQuote
   return null;
 }
 
+// ── Static-mode snapshot provider (yfinance via GitHub Actions) ───────────
+// GitHub Pages has no backend and browsers are CORS-blocked from Yahoo, so a
+// scheduled workflow publishes a yfinance snapshot to the `data` branch; the
+// raw CDN is CORS-open. Snapshot = real Yahoo data, delayed (~15 min cadence).
+
+const SNAPSHOT_URL =
+  "https://raw.githubusercontent.com/jozelazarevski/edgehawk-scanner/data/quotes.json";
+const SNAPSHOT_MAX_AGE_MS = 72 * 3600 * 1000; // keep Friday close over the weekend
+
+interface SnapshotHistory {
+  closes: number[];
+  highs: number[];
+  lows: number[];
+}
+
+interface Snapshot {
+  ts: number; // unix seconds
+  quotes: Record<string, RawQuote>;
+  history: Record<string, SnapshotHistory>;
+}
+
+let snapshotCache: { fetchedAt: number; data: Snapshot | null } | null = null;
+
+async function fetchSnapshot(): Promise<Snapshot | null> {
+  if (snapshotCache && Date.now() - snapshotCache.fetchedAt < 60_000) {
+    return snapshotCache.data;
+  }
+  let data: Snapshot | null = null;
+  try {
+    const res = await fetch(SNAPSHOT_URL, { signal: AbortSignal.timeout(9000) });
+    if (res.ok) {
+      const parsed = (await res.json()) as Snapshot;
+      if (parsed && parsed.ts && Date.now() - parsed.ts * 1000 < SNAPSHOT_MAX_AGE_MS) {
+        data = parsed;
+      }
+    }
+  } catch {
+    // offline / not yet published — fall back to simulation
+  }
+  snapshotCache = { fetchedAt: Date.now(), data };
+  return data;
+}
+
+const IS_BROWSER = typeof (globalThis as { window?: unknown }).window !== "undefined";
+
 // ── Public engine API ───────────────────────────────────────────────────────
 
 export interface EngineResult {
@@ -545,7 +590,28 @@ export async function getQuotes(symbols?: string[]): Promise<EngineResult> {
   warmUpSimulation();
   tickSimulation();
 
-  const live = await fetchYahooQuotes(entries.map((e) => e.symbol));
+  // Browser (static Pages build): use the yfinance snapshot — real quotes and
+  // real 60-day history, so indicators/patterns are computed on real data.
+  // Server: proxy Yahoo directly.
+  let live: Map<string, RawQuote> | null = null;
+  if (IS_BROWSER) {
+    const snap = await fetchSnapshot();
+    if (snap) {
+      live = new Map(Object.entries(snap.quotes));
+      // Overlay real daily history onto the sim states so indicator math
+      // (RSI/MACD/SMA/Bollinger/ATR, regression channels) uses real bars.
+      for (const [sym, h] of Object.entries(snap.history)) {
+        const u = UNIVERSE_MAP.get(sym);
+        if (!u || !h.closes?.length) continue;
+        const s = getSim(u);
+        s.closes = h.closes;
+        s.highs = h.highs;
+        s.lows = h.lows;
+      }
+    }
+  } else {
+    live = await fetchYahooQuotes(entries.map((e) => e.symbol));
+  }
   const source: DataSource = live && live.size > 0 ? "live" : "simulated";
 
   const quotes = entries.map((u) => {
@@ -617,6 +683,30 @@ export async function getCandles(symbol: string, range = "1d"): Promise<{ candle
   const u = UNIVERSE_MAP.get(symbol.toUpperCase());
   if (!u) return { candles: [], source: "simulated" };
 
+  // Browser: build real daily candles from the snapshot history
+  if (IS_BROWSER) {
+    const snap = await fetchSnapshot();
+    const h = snap?.history?.[u.symbol];
+    if (h && h.closes.length > 1) {
+      const n = h.closes.length;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const candles: Candle[] = [];
+      for (let i = 0; i < n; i++) {
+        const c = h.closes[i];
+        const o = i > 0 ? h.closes[i - 1] : c;
+        candles.push({
+          time: nowSec - (n - i) * 86400,
+          open: round2(o),
+          high: round2(Math.max(h.highs[i], o, c)),
+          low: round2(Math.min(h.lows[i], o, c)),
+          close: round2(c),
+          volume: 0,
+        });
+      }
+      return { candles, source: "live" };
+    }
+    // fall through to synthetic
+  } else {
   // Try live first
   try {
     const interval = range === "1d" ? "5m" : range === "5d" ? "15m" : "1d";
@@ -656,6 +746,7 @@ export async function getCandles(symbol: string, range = "1d"): Promise<{ candle
     }
   } catch {
     // fall through to synthetic
+  }
   }
 
   // Synthetic intraday path consistent with the sim state

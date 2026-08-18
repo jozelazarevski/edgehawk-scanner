@@ -1,0 +1,31 @@
+name: Refresh market data (yfinance)
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 min (best-effort on GitHub-hosted runners)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yfinance
+      - run: python scripts/fetch_quotes.py
+      - name: Publish snapshot to data branch
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git checkout --orphan data-tmp
+          git rm -rf . > /dev/null 2>&1 || true
+          git add data/quotes.json
+          git commit -m "data: quotes snapshot $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push -f origin data-tmp:data
+          git checkout main || true
+          git branch -D data-tmp || true

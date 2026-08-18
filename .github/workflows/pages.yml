@@ -21,7 +21,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
       # Image assets are stored base64-encoded under assets-b64/ (the REST API
       # only accepts text). Large images are split into .partNN fragments;
       # reassemble those first, then decode everything into public/.
